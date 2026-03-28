@@ -245,6 +245,7 @@ static void addProc(nsj_t* nsj, pid_t pid, int sock) {
 	pids_t p;
 
 	p.start = time(NULL);
+	clock_gettime(CLOCK_MONOTONIC, &p.start_ts);
 	p.remote_txt = net::connToText(sock, /* remote= */ true, &p.remote_addr);
 	p.pasta_pid = -1;
 
@@ -374,24 +375,37 @@ static int reapProc(nsj_t* nsj, pid_t pid, bool should_wait = false) {
 			remote_txt = p->second.remote_txt;
 		}
 
-		if (WIFEXITED(status)) {
-			uint64_t usec = (uint64_t)ru.ru_utime.tv_usec + (uint64_t)ru.ru_stime.tv_usec;
-			uint64_t sec = (uint64_t)ru.ru_utime.tv_sec + (uint64_t)ru.ru_stime.tv_sec + usec / 1000000;
-			uint64_t msec = (usec % 1000000) / 1000;
-			LOG_I("pid=%d (%s) exited with status: %d, time: %lu.%03lu sec, maxrss: %ld KB, (PIDs left: %d)", pid,
-			    remote_txt.c_str(), WEXITSTATUS(status), (unsigned long)sec, (unsigned long)msec, ru.ru_maxrss, countProc(nsj) - 1);
-			removeProc(nsj, pid);
-			return WEXITSTATUS(status);
-		}
-		if (WIFSIGNALED(status)) {
-			uint64_t usec = (uint64_t)ru.ru_utime.tv_usec + (uint64_t)ru.ru_stime.tv_usec;
-			uint64_t sec = (uint64_t)ru.ru_utime.tv_sec + (uint64_t)ru.ru_stime.tv_sec + usec / 1000000;
-			uint64_t msec = (usec % 1000000) / 1000;
-			LOG_I("pid=%d (%s) terminated with signal: %s (%d), time: %lu.%03lu sec, maxrss: %ld KB, (PIDs left: %d)", pid,
-			    remote_txt.c_str(), util::sigName(WTERMSIG(status)).c_str(),
-			    WTERMSIG(status), (unsigned long)sec, (unsigned long)msec, ru.ru_maxrss, countProc(nsj) - 1);
-			removeProc(nsj, pid);
-			return 128 + WTERMSIG(status);
+		if (WIFEXITED(status) || WIFSIGNALED(status)) {
+			uint64_t wall_sec = 0, wall_msec = 0;
+			if (p != nsj->pids.end()) {
+				struct timespec now;
+				clock_gettime(CLOCK_MONOTONIC, &now);
+				uint64_t sec_diff = now.tv_sec - p->second.start_ts.tv_sec;
+				long nsec_diff = now.tv_nsec - p->second.start_ts.tv_nsec;
+				if (nsec_diff < 0) {
+					sec_diff--;
+					nsec_diff += 1000000000L;
+				}
+				wall_sec = sec_diff;
+				wall_msec = nsec_diff / 1000000L;
+			}
+			uint64_t user_usec = (uint64_t)ru.ru_utime.tv_usec;
+			uint64_t user_sec = (uint64_t)ru.ru_utime.tv_sec + user_usec / 1000000ULL;
+			uint64_t user_msec = (user_usec % 1000000ULL) / 1000ULL;
+
+			if (WIFEXITED(status)) {
+				LOG_I("pid=%d (%s) exited with status: %d, wall time: %lu.%03lu sec, user time: %lu.%03lu sec, maxrss: %ld KB, (PIDs left: %d)", pid,
+				    remote_txt.c_str(), WEXITSTATUS(status), (unsigned long)wall_sec, (unsigned long)wall_msec, (unsigned long)user_sec, (unsigned long)user_msec, ru.ru_maxrss, countProc(nsj) - 1);
+				removeProc(nsj, pid);
+				return WEXITSTATUS(status);
+			}
+			if (WIFSIGNALED(status)) {
+				LOG_I("pid=%d (%s) terminated with signal: %s (%d), wall time: %lu.%03lu sec, user time: %lu.%03lu sec, maxrss: %ld KB, (PIDs left: %d)", pid,
+				    remote_txt.c_str(), util::sigName(WTERMSIG(status)).c_str(),
+				    WTERMSIG(status), (unsigned long)wall_sec, (unsigned long)wall_msec, (unsigned long)user_sec, (unsigned long)user_msec, ru.ru_maxrss, countProc(nsj) - 1);
+				removeProc(nsj, pid);
+				return 128 + WTERMSIG(status);
+			}
 		}
 	}
 	return 0;
