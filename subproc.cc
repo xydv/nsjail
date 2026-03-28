@@ -34,6 +34,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
@@ -347,8 +348,9 @@ static void seccompViolation(nsj_t* nsj, siginfo_t* si) {
 
 static int reapProc(nsj_t* nsj, pid_t pid, bool should_wait = false) {
 	int status;
+	struct rusage ru;
 
-	if (wait4(pid, &status, should_wait ? 0 : WNOHANG, NULL) == pid) {
+	if (wait4(pid, &status, should_wait ? 0 : WNOHANG, &ru) == pid) {
 		if (nsj->njc.use_cgroupv2()) {
 			cgroup2::finishFromParent(nsj, pid);
 		} else {
@@ -373,15 +375,21 @@ static int reapProc(nsj_t* nsj, pid_t pid, bool should_wait = false) {
 		}
 
 		if (WIFEXITED(status)) {
-			LOG_I("pid=%d (%s) exited with status: %d, (PIDs left: %d)", pid,
-			    remote_txt.c_str(), WEXITSTATUS(status), countProc(nsj) - 1);
+			uint64_t usec = (uint64_t)ru.ru_utime.tv_usec + (uint64_t)ru.ru_stime.tv_usec;
+			uint64_t sec = (uint64_t)ru.ru_utime.tv_sec + (uint64_t)ru.ru_stime.tv_sec + usec / 1000000;
+			uint64_t msec = (usec % 1000000) / 1000;
+			LOG_I("pid=%d (%s) exited with status: %d, time: %lu.%03lu sec, maxrss: %ld KB, (PIDs left: %d)", pid,
+			    remote_txt.c_str(), WEXITSTATUS(status), (unsigned long)sec, (unsigned long)msec, ru.ru_maxrss, countProc(nsj) - 1);
 			removeProc(nsj, pid);
 			return WEXITSTATUS(status);
 		}
 		if (WIFSIGNALED(status)) {
-			LOG_I("pid=%d (%s) terminated with signal: %s (%d), (PIDs left: %d)", pid,
+			uint64_t usec = (uint64_t)ru.ru_utime.tv_usec + (uint64_t)ru.ru_stime.tv_usec;
+			uint64_t sec = (uint64_t)ru.ru_utime.tv_sec + (uint64_t)ru.ru_stime.tv_sec + usec / 1000000;
+			uint64_t msec = (usec % 1000000) / 1000;
+			LOG_I("pid=%d (%s) terminated with signal: %s (%d), time: %lu.%03lu sec, maxrss: %ld KB, (PIDs left: %d)", pid,
 			    remote_txt.c_str(), util::sigName(WTERMSIG(status)).c_str(),
-			    WTERMSIG(status), countProc(nsj) - 1);
+			    WTERMSIG(status), (unsigned long)sec, (unsigned long)msec, ru.ru_maxrss, countProc(nsj) - 1);
 			removeProc(nsj, pid);
 			return 128 + WTERMSIG(status);
 		}
