@@ -37,7 +37,14 @@ LDFLAGS += -pie -Wl,-z,noexecstack -lpthread $(PROTOBUF_LIBS)
 ifeq ($(NL3_EXISTS), yes)
 	CXXFLAGS += $(shell pkg-config --cflags libnl-route-3.0)
 	LDFLAGS += $(shell pkg-config --libs libnl-route-3.0)
+	# Check for MPLS/Encap support in libnl-route
+	NL_HAS_ENCAP := $(shell pkg-config --atleast-version=3.5.0 libnl-route-3.0 && echo yes)
+
+	ifeq ($(NL_HAS_ENCAP), yes)
+		CXXFLAGS += -DNSJAIL_NL_HAS_ENCAP
+	endif
 endif
+
 
 ifdef DEBUG
 	CXXFLAGS += -g -ggdb -gdwarf-4

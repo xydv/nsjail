@@ -757,6 +757,7 @@ static bool parseIp6(const std::string& ip_str, struct in6_addr* addr, int* mask
 	return inet_pton(AF_INET6, ip.c_str(), addr) == 1;
 }
 
+#ifdef NSJAIL_NL_HAS_ENCAP
 static bool applyEncapRoute(struct nl_sock* sk, const nsjail::NsJailConfig_TrafficRule& rule,
     int family, uint32_t table_id) {
 	struct rtnl_route* route = rtnl_route_alloc();
@@ -843,6 +844,8 @@ static bool applyEncapRoute(struct nl_sock* sk, const nsjail::NsJailConfig_Traff
 	rtnl_route_put(route);
 	return true;
 }
+#endif
+
 
 static bool applyTrafficRule(
     struct nl_sock* sk, const nsjail::NsJailConfig_TrafficRule& rule, int family) {
@@ -914,6 +917,7 @@ static bool applyTrafficRule(
 			rtnl_rule_set_action(rtnl_rule, FR_ACT_UNREACHABLE);
 
 		} else if (rule.action() == nsjail::NsJailConfig_TrafficRule::ENCAP) {
+#ifdef NSJAIL_NL_HAS_ENCAP
 			static uint32_t current_table = 1000;
 			uint32_t table_id = current_table++;
 			rtnl_rule_set_action(rtnl_rule, FR_ACT_TO_TBL);
@@ -922,6 +926,13 @@ static bool applyTrafficRule(
 				rtnl_rule_put(rtnl_rule);
 				return false;
 			}
+#else
+			LOG_E("Traffic rule ENCAP action requested but nsjail was compiled "
+			      "without MPLS/Encap support (libnl too old?)");
+			rtnl_rule_put(rtnl_rule);
+			return false;
+#endif
+
 
 		} else if (rule.action() == nsjail::NsJailConfig_TrafficRule::ALLOW) {
 			rtnl_rule_set_action(rtnl_rule, FR_ACT_TO_TBL);
